@@ -1,0 +1,5 @@
+.python-version
+*.txt
+COCA_WordFrequency.csv
+__pycache__/*
+*.pkl
