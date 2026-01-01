@@ -23,6 +23,11 @@ def main():
     ngram_counter = Counter()
     ngram_totals = Counter()
     for corpus_string in corpus_strings:
+        # pad to denote start and end of word -- maybe not quite accurate for longer ngrams,
+        # but works fairly well for n=3
+        corpus_string = (
+            (" " * (NGRAM_LENGTH - 1)) + corpus_string + (" " * (NGRAM_LENGTH - 1))
+        )
         for i in range(len(corpus_string) - NGRAM_LENGTH + 1):
             ngram_counter[corpus_string[i : i + NGRAM_LENGTH]] += 1
             ngram_totals[corpus_string[i : i + NGRAM_LENGTH - 1]] += 1
