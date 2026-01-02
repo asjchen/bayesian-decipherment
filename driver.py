@@ -9,8 +9,6 @@ from scipy.special import logsumexp
 
 from config import *
 
-# need to store the OG LM probabilities I think
-
 
 class CRPCache:
     def __init__(self):
@@ -34,20 +32,12 @@ class CRPCache:
 
 def build_word_model(df_word_freqs_raw):
     total_count = df_word_freqs_raw["freq"].sum()
-    word_log_probs = defaultdict(lambda: np.log(WORD_PSUEDOCOUNT) - np.log(total_count))
+    word_log_probs = defaultdict(lambda: -np.inf)
     for _, row in df_word_freqs_raw.iterrows():
         # HACK: slightly off by using word pseudocount, but we need a way to handle
         # non-words and uncommon words
-        word_log_probs[row["lemma"]] = np.log(row["freq"] + WORD_PSUEDOCOUNT) - np.log(
-            total_count
-        )
+        word_log_probs[row["lemma"].upper()] = np.log(row["freq"]) - np.log(total_count)
     return word_log_probs
-
-
-# def get_ngram_crp_log_term(k, v, ngram_probs, plaintext_cache):
-#     return np.log(
-#         SOURCE_DIRCHLET_HYPERPARAMETER * ngram_probs[k + v] + plaintext_cache.get(k, v)
-#     ) - np.log(SOURCE_DIRCHLET_HYPERPARAMETER + plaintext_cache.get_total(k))
 
 
 def get_cipher_crp_log_term(k, v, num_ciphertext_chars, cipher_cache):
@@ -88,6 +78,13 @@ def build_initial_state(ciphertext):
             continue
         cipher_cache.add(cand_plaintext[i], cipher_char)
 
+    # if needed, add initial spaces at random
+    if not SPACING_INCLUDED:
+        orig_length = len(ciphertext)
+        for idx in range(orig_length - 1, 0, -1):
+            if np.random.rand() < INITIAL_SPACE_PROBABILITY:
+                cand_plaintext = cand_plaintext[:idx] + " " + cand_plaintext[idx:]
+
     return {
         "plaintext": cand_plaintext,
         "cipher_mapping": cipher_mapping,
@@ -101,6 +98,8 @@ def main():
     # 1) ingest the ciphertext and LM
     with open(CIPHERTEXT_PATH, "r") as f:
         ciphertext = f.read()
+        if not SPACING_INCLUDED:
+            ciphertext = ciphertext.replace(" ", "")
     with open(NGRAM_PRIORS_PICKLE_PATH, "rb") as f:
         ngram_probs = pickle.load(f)
     word_freqs = pd.read_csv(WORD_FREQUENCY_PATH)
@@ -117,13 +116,17 @@ def main():
         temperature = (step / (ANNEALING_STEPS - 1)) * ANNEALING_END + (
             ANNEALING_START
         ) * (1 - step / (ANNEALING_STEPS - 1))
+
+        # 3a) sample the cipher mapping
         # cache the current positions of the cipher characters
         # needs to be robust to if I change the spaces in the plaintext cand
         cipher_char_to_positions = {c: [] for c in cipher_mapping}
+        c_pointer = 0
         for p_pointer in range(len(plaintext)):
-            if ciphertext[p_pointer] == " ":
+            if plaintext[p_pointer] == " ":
                 continue
-            cipher_char_to_positions[ciphertext[p_pointer]].append(p_pointer)
+            cipher_char_to_positions[ciphertext[c_pointer]].append(p_pointer)
+            c_pointer += 1
 
         for cipher_char in cipher_mapping:
             # check the log prob deltas if we change that character
@@ -198,7 +201,6 @@ def main():
                 ]
             )
             log_probs -= logsumexp(log_probs)
-
             new_plaintext_char = np.random.choice(LETTER_FREQUENCY, p=np.exp(log_probs))
 
             # update all caches
@@ -208,6 +210,57 @@ def main():
             # update plaintext
             for pos in cipher_char_to_positions[cipher_char]:
                 plaintext = plaintext[:pos] + new_plaintext_char + plaintext[pos + 1 :]
+
+        # 3b) sample the spaces
+        if SPACING_INCLUDED:
+            continue
+        p_pointer = 1  # guarantee no space at start
+        # sample space presence before p_pointer
+        for c_pointer in range(1, len(ciphertext)):
+            orig_has_space = False
+            if plaintext[p_pointer] == " ":
+                p_pointer += 1
+                orig_has_space = True
+
+            # obtain the two words if split
+            right_first_word_idx = (
+                p_pointer - 1 if not orig_has_space else p_pointer - 2
+            )
+            left_first_word_idx = right_first_word_idx
+            while left_first_word_idx > 0 and plaintext[left_first_word_idx - 1] != " ":
+                left_first_word_idx -= 1
+            first_word = plaintext[left_first_word_idx : right_first_word_idx + 1]
+            right_second_word_idx = p_pointer
+            while (
+                right_second_word_idx < len(plaintext) - 1
+                and plaintext[right_second_word_idx + 1] != " "
+            ):
+                right_second_word_idx += 1
+            second_word = plaintext[p_pointer : right_second_word_idx + 1]
+
+            log_probs = (
+                np.array(
+                    [
+                        get_word_log_prior(
+                            first_word + second_word, word_log_probs, ngram_probs
+                        ),
+                        get_word_log_prior(first_word, word_log_probs, ngram_probs)
+                        + get_word_log_prior(second_word, word_log_probs, ngram_probs),
+                    ]
+                )
+                / temperature
+            )
+            log_probs -= logsumexp(log_probs)
+            new_has_space = np.random.rand() < np.exp(log_probs[1])
+
+            # update plaintext and p_pointer
+            if new_has_space and not orig_has_space:
+                plaintext = plaintext[:p_pointer] + " " + plaintext[p_pointer:]
+                p_pointer += 2
+            elif not new_has_space and orig_has_space:
+                plaintext = plaintext[: p_pointer - 1] + plaintext[p_pointer:]
+            else:
+                p_pointer += 1
 
         print(f"Step {step + 1}: {plaintext}")
 
