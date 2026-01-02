@@ -124,6 +124,8 @@ def main():
         c_pointer = 0
         for p_pointer in range(len(plaintext)):
             if plaintext[p_pointer] == " ":
+                if SPACING_INCLUDED:
+                    c_pointer += 1
                 continue
             cipher_char_to_positions[ciphertext[c_pointer]].append(p_pointer)
             c_pointer += 1
@@ -213,6 +215,7 @@ def main():
 
         # 3b) sample the spaces
         if SPACING_INCLUDED:
+            print(f"Step {step + 1}: {plaintext}")
             continue
         p_pointer = 1  # guarantee no space at start
         # sample space presence before p_pointer
@@ -261,8 +264,8 @@ def main():
                 plaintext = plaintext[: p_pointer - 1] + plaintext[p_pointer:]
             else:
                 p_pointer += 1
-
-        print(f"Step {step + 1}: {plaintext}")
+        if ANNEALING_STEPS < 1000 or step % 50 == 0:
+            print(f"Step {step + 1}: {plaintext}")
 
 
 if __name__ == "__main__":
