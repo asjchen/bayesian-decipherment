@@ -97,7 +97,7 @@ def main():
 
     # 1) ingest the ciphertext and LM
     with open(CIPHERTEXT_PATH, "r") as f:
-        ciphertext = f.read()
+        ciphertext = f.read().strip()
         if not SPACING_INCLUDED:
             ciphertext = ciphertext.replace(" ", "")
     with open(NGRAM_PRIORS_PICKLE_PATH, "rb") as f:
